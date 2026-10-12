@@ -99,6 +99,23 @@ await check('an unknown manager returns 404, not a 500 or empty squad', async ()
   assert.ok(typeof body.error === 'string' && body.error.length > 0);
 });
 
+await check('routes with AND without a trailing slash', async () => {
+  // The client requests `/api/fpl/bootstrap-static/` (with the slash), while a
+  // Vercel rewrite for `/api/(.*)` can deliver either form. Express must match
+  // both; this failed on Vercel as a router-level 404 when only one form was
+  // accounted for in the rewrite.
+  const withSlash = await fetch(`${origin}/api/fpl/fixtures/`);
+  const withoutSlash = await fetch(`${origin}/api/fpl/fixtures`);
+
+  assert.equal(withSlash.status, 200, 'trailing-slash form failed');
+  assert.equal(withoutSlash.status, 200, 'slashless form failed');
+
+  const a = (await withSlash.json()) as unknown[];
+  const b = (await withoutSlash.json()) as unknown[];
+  assert.equal(a.length, b.length, 'the two forms returned different data');
+  assert.equal(a.length, 380, 'a 20-team season is 380 fixtures');
+});
+
 await check('a real manager resolves to a usable squad', async () => {
   const entry = await (
     await fetch(`${origin}/api/fpl/entry/3808385/`)

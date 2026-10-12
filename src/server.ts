@@ -2,7 +2,6 @@ import express, { Request, Response, Express } from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dns from 'dns';
-import fetch from 'node-fetch';
 
 // Enforce IPv4 DNS resolution to prevent cloud container networking timeouts
 dns.setDefaultResultOrder('ipv4first');
@@ -61,6 +60,10 @@ const sleep = (ms: number): Promise<void> =>
 /**
  * Fetch from the FPL upstream with a bounded retry on network errors and 5xx.
  * 4xx responses are deterministic (e.g. a bad entry id) and are never retried.
+ *
+ * Uses the global `fetch` from Node 18+ rather than the `node-fetch` package:
+ * node-fetch v3 is pure ESM and fails to bundle inside a Vercel serverless
+ * function, which surfaced as FUNCTION_INVOCATION_FAILED (500).
  */
 async function fetchUpstream(url: string): Promise<unknown> {
   let lastError: Error | null = null;
