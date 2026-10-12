@@ -9,20 +9,20 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const projectRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 
+type FetchHandler = (request: Request) => Promise<Response> | Response;
+
 /**
- * The Vercel Node builder compiles the serverless entry to **CommonJS**, even
- * though package.json declares `"type": "module"`. Express is itself CommonJS, so
- * an ESM bundle cannot work either: bundling it to ESM fails at runtime with
- * `Dynamic require of "path" is not supported`.
+ * Guards the serverless entry point.
  *
- * A previous revision used `import.meta.url`, which is `undefined` under
- * CommonJS, so `fileURLToPath(undefined)` threw while the module was still being
- * initialised. Every request then failed with FUNCTION_INVOCATION_FAILED (500),
- * even though the same code ran perfectly under ESM locally.
+ * Mounting an Express app inside the Vercel function failed repeatedly with
+ * FUNCTION_INVOCATION_FAILED (500) — the module threw while initialising — even
+ * though the identical code bundled fine locally and the static site deployed
+ * correctly. The deployed path is now a plain Web Standard handler over
+ * src/proxy.ts, with no Express and no module-load side effects.
  *
- * These tests bundle `api/index.ts` the way Vercel does — as CommonJS — and
- * assert the module loads and actually serves traffic, so no future ESM-only
- * syntax can silently break the deployment again.
+ * These tests bundle `api/index.ts` exactly as the Vercel Node builder does
+ * (CommonJS, platform=node) and then invoke the handler for real, so a future
+ * ESM-only construct or import-time crash fails here rather than in production.
  */
 describe('serverless bundle', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'fpl-bundle-'));
@@ -41,48 +41,83 @@ describe('serverless bundle', () => {
     return outfile;
   };
 
-  it('loads when bundled as CommonJS, which is what Vercel does', async () => {
-    const outfile = await bundle('cjs');
-    const mod = require(outfile) as { default?: unknown };
-    assert.equal(typeof mod.default, 'function', 'default export must be the Express app');
+  const loadHandler = async (format: 'cjs' | 'esm'): Promise<FetchHandler> => {
+    const outfile = await bundle(format);
+    const mod = require(outfile) as { default: FetchHandler };
+    return mod.default;
+  };
+
+  it('loads as CommonJS, which is what the Vercel builder emits', async () => {
+    const handler = await loadHandler('cjs');
+    assert.equal(typeof handler, 'function', 'default export must be the handler function');
   });
 
   it('contains no ESM-only syntax that would crash under CommonJS', async () => {
     const outfile = await bundle('cjs');
     const source = readFileSync(outfile, 'utf8');
-    // `import.meta` is the specific construct that broke the deployment; it
-    // survives bundling as a bare member access rather than a syntax error.
     assert.doesNotMatch(source, /import\.meta\b/, 'import.meta is unavailable under CommonJS');
-    assert.doesNotMatch(source, /top-level await/i);
+    assert.doesNotMatch(source, /\bawait\s+import\s*\(/, 'dynamic import needs ESM semantics');
   });
 
-  it('serves the API through the CommonJS bundle', async (t) => {
-    const outfile = await bundle('cjs');
-    const mod = require(outfile) as { default: (req: unknown, res: unknown) => void };
-
-    // Vercel invokes the default export with (req, res) on a Node server.
-    const http = await import('http');
-    const server = http.createServer(mod.default as never);
-    await new Promise<void>((resolve) => server.listen(0, resolve));
-
-    t.after(() => {
-      server.close();
-      rmSync(dir, { recursive: true, force: true });
+  it('pulls no web framework into the deployed bundle', () => {
+    // Express in the function was the source of the 500s; keep it out so the
+    // regression cannot come back unnoticed.
+    const outfile = path.join(dir, 'framework-check.cjs');
+    return build({
+      entryPoints: [path.join(projectRoot, 'api/index.ts')],
+      bundle: true,
+      platform: 'node',
+      target: 'node20',
+      format: 'cjs',
+      outfile,
+      write: false,
+      logLevel: 'silent',
+    }).then((result) => {
+      const source = result.outputFiles[0].text;
+      assert.doesNotMatch(source, /require\(["']express["']\)/);
+      assert.doesNotMatch(source, /express\/lib/);
     });
+  });
 
-    const address = server.address();
-    assert.ok(address && typeof address === 'object');
-    const origin = `http://127.0.0.1:${address.port}`;
+  it('answers /api/health through the bundled handler', async (t) => {
+    const handler = await loadHandler('cjs');
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
 
-    const health = await fetch(`${origin}/api/health`);
-    assert.equal(health.status, 200, 'the CJS bundle must serve /api/health');
+    const response = await handler(new Request('https://example.test/api/health'));
+    assert.equal(response.status, 200);
 
-    // Both URL forms must work: the client requests the trailing-slash form.
-    for (const path_ of ['/api/fpl/fixtures/', '/api/fpl/fixtures']) {
-      const response = await fetch(`${origin}${path_}`);
-      assert.equal(response.status, 200, `${path_} failed in the CJS bundle`);
+    const body = (await response.json()) as { status: string };
+    assert.equal(body.status, 'ok');
+  });
+
+  it('returns a JSON 404 for an unknown API path', async () => {
+    const handler = await loadHandler('cjs');
+    const response = await handler(new Request('https://example.test/api/nope'));
+    assert.equal(response.status, 404);
+    assert.match(response.headers.get('content-type') ?? '', /application\/json/);
+  });
+
+  it('proxies the FPL API in both trailing-slash forms', async () => {
+    const handler = await loadHandler('cjs');
+
+    // The client requests the trailing-slash form; a rewrite may deliver either.
+    for (const path of ['/api/fpl/fixtures/', '/api/fpl/fixtures']) {
+      const response = await handler(new Request(`https://example.test${path}`));
+      assert.equal(response.status, 200, `${path} failed`);
+
       const body = (await response.json()) as unknown[];
-      assert.equal(body.length, 380, `${path_} returned the wrong payload`);
+      assert.equal(body.length, 380, `${path} returned the wrong payload`);
     }
+  });
+
+  it('returns a real 404 for an unknown manager, never an empty squad', async () => {
+    const handler = await loadHandler('cjs');
+    const response = await handler(
+      new Request('https://example.test/api/fpl/entry/999999999/')
+    );
+
+    assert.equal(response.status, 404);
+    const body = (await response.json()) as { error?: string };
+    assert.ok(typeof body.error === 'string' && body.error.length > 0);
   });
 });

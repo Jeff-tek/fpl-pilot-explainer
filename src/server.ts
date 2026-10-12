@@ -1,189 +1,82 @@
 import express, { Request, Response, Express } from 'express';
 import path from 'path';
+import { existsSync } from 'fs';
 import dns from 'dns';
+
+// The `.js` extension is required: Node's ESM resolver does not do extensionless
+// specifiers, so a bare `from './proxy'` compiles fine under tsx but throws
+// ERR_MODULE_NOT_FOUND for `node dist/server.js`. TypeScript maps it back to
+// proxy.ts under `moduleResolution: bundler`.
+import { proxyFplPath, purgeCache } from './proxy.js';
 
 // Enforce IPv4 DNS resolution to prevent cloud container networking timeouts
 dns.setDefaultResultOrder('ipv4first');
 
 /**
- * Resolve the module directory without `import.meta.url`.
+ * Locate the built client without `import.meta.url`.
  *
- * `import.meta` does not exist in CommonJS, and the Vercel Node builder may
- * compile this file to CommonJS even though package.json says `"type": "module"`.
- * Using it here made the module throw during initialisation, which surfaced as
- * FUNCTION_INVOCATION_FAILED (500) on every request. `typeof __dirname` is a
- * safe probe: it is defined under CommonJS and simply absent under ESM.
+ * `import.meta` does not exist in CommonJS, and a bundler may compile this file
+ * to CommonJS even though package.json says `"type": "module"`, so it cannot be
+ * relied on. Instead, probe the known locations: alongside this file (the normal
+ * `dist/server.js` case) and relative to the working directory.
  */
-const moduleDir: string =
-  typeof __dirname !== 'undefined' ? __dirname : process.cwd();
+function resolvePublicDir(): string {
+  const moduleDir: string =
+    typeof __dirname !== 'undefined' ? __dirname : process.cwd();
+
+  const candidates = [
+    path.join(moduleDir, 'public'),
+    path.join(process.cwd(), 'dist', 'public'),
+    path.join(process.cwd(), 'public'),
+  ];
+
+  return candidates.find((dir) => existsSync(dir)) ?? candidates[0];
+}
 
 const PORT = process.env.PORT || 3001;
 
-const FPL_API_BASE = 'https://fantasy.premierleague.com/api/';
-
-// Upstream retry policy: 2 attempts (1 initial + 1 retry) with a short backoff.
-const UPSTREAM_RETRIES = 1;
-const UPSTREAM_BACKOFF_MS = 400;
-
-// In-memory TTL cache
-interface CacheEntry {
-  data: unknown;
-  timestamp: number;
-  ttl: number;
-}
-
-const cache = new Map<string, CacheEntry>();
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-
-function getCachedOrFetch(
-  key: string,
-  fetcher: () => Promise<unknown>,
-  ttl = CACHE_TTL
-): Promise<unknown> {
-  const cached = cache.get(key);
-  const now = Date.now();
-
-  if (cached && now - cached.timestamp < cached.ttl) {
-    return Promise.resolve(cached.data);
-  }
-
-  return fetcher().then((data) => {
-    cache.set(key, { data, timestamp: now, ttl });
-    return data;
-  });
-}
-
-class UpstreamError extends Error {
-  status: number;
-  constructor(message: string, status: number) {
-    super(message);
-    this.name = 'UpstreamError';
-    this.status = status;
-  }
-}
-
-const sleep = (ms: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, ms));
-
-/**
- * Fetch from the FPL upstream with a bounded retry on network errors and 5xx.
- * 4xx responses are deterministic (e.g. a bad entry id) and are never retried.
- *
- * Uses the global `fetch` from Node 18+ rather than the `node-fetch` package:
- * node-fetch v3 is pure ESM and fails to bundle inside a Vercel serverless
- * function, which surfaced as FUNCTION_INVOCATION_FAILED (500).
- */
-async function fetchUpstream(url: string): Promise<unknown> {
-  let lastError: Error | null = null;
-  let lastStatus = 502;
-
-  for (let attempt = 0; attempt <= UPSTREAM_RETRIES; attempt += 1) {
-    try {
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent': 'FPL-Pilot/1.0',
-          'Accept': 'application/json',
-        },
-      });
-
-      if (response.ok) {
-        return response.json();
-      }
-
-      lastStatus = response.status;
-      lastError = new Error(`FPL API error: ${response.status} ${response.statusText}`);
-
-      // Client errors are deterministic - propagate immediately, no point retrying.
-      if (response.status < 500) {
-        throw new UpstreamError(
-          `FPL API error: ${response.status} ${response.statusText}`,
-          response.status
-        );
-      }
-    } catch (error) {
-      if (error instanceof UpstreamError) {
-        throw error;
-      }
-      lastError = error instanceof Error ? error : new Error(String(error));
-      lastStatus = 502;
-    }
-
-    if (attempt < UPSTREAM_RETRIES) {
-      await sleep(UPSTREAM_BACKOFF_MS);
-    }
-  }
-
-  // Retry only network errors and 5xx. A 404 from the upstream is a real,
-  // meaningful answer ("no such entry") and must survive to the client as 404
-  // rather than being masked as an upstream outage.
-  throw new UpstreamError(
-    lastError?.message ?? 'Failed to fetch data from FPL API',
-    lastStatus === 404 ? 404 : 502
-  );
-}
-
-function buildQueryString(query: Request['query']): string {
-  const keys = Object.keys(query);
-  if (keys.length === 0) {
-    return '';
-  }
-  return `?${new URLSearchParams(query as Record<string, string>).toString()}`;
-}
-
+/** Serve the built SPA when running standalone. Serverless hosts do this themselves. */
 export interface CreateAppOptions {
-  /**
-   * Serve the built SPA from `dist/public`. Only the standalone Node server does
-   * this; Vercel serves static assets itself and ships no dist/ in the bundle.
-   */
   serveStatic?: boolean;
+}
+
+/** Convert Express's parsed query object back into a query string. */
+function queryToSearch(query: Request['query']): string {
+  const params = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(query)) {
+    if (Array.isArray(value)) {
+      for (const item of value) params.append(key, String(item));
+    } else if (value !== undefined) {
+      params.append(key, String(value));
+    }
+  }
+
+  const serialised = params.toString();
+  return serialised.length > 0 ? `?${serialised}` : '';
 }
 
 export function createApp(options: CreateAppOptions = {}): Express {
   const app = express();
 
-  // Health probe - never proxied upstream.
   app.get('/api/health', (_req: Request, res: Response) => {
     res.json({ status: 'ok', uptime: process.uptime() });
   });
 
-  // Proxy for /api/fpl/*. The FPL API sends no Access-Control-Allow-Origin
-  // header, so the browser cannot call it directly - this proxy is required.
-  app.get('/api/fpl/*', async (req: Request, res: Response) => {
-    const fplPath = req.params[0];
-    const queryString = buildQueryString(req.query);
-    const cacheKey = `fpl:${fplPath}${queryString}`;
-
-    try {
-      const data = await getCachedOrFetch(cacheKey, () =>
-        fetchUpstream(`${FPL_API_BASE}${fplPath}${queryString}`)
-      );
-
-      res.json(data);
-    } catch (error) {
-      if (error instanceof UpstreamError) {
-        console.error(`Error fetching ${fplPath}: ${error.message}`);
-        res.status(error.status).json({ error: error.message, path: `/api/fpl/${fplPath}` });
-        return;
-      }
-
-      console.error(`Error fetching ${fplPath}:`, error);
-      res.status(500).json({
-        error: error instanceof Error ? error.message : 'Unknown server error',
-        path: `/api/fpl/${fplPath}`,
-      });
-    }
+  app.post('/api/fpl/purge-cache', (_req: Request, res: Response) => {
+    purgeCache();
+    res.json({ status: 'Cache purged' });
   });
 
-  // Purge cache route
-  app.post('/api/fpl/purge-cache', (_req: Request, res: Response) => {
-    cache.clear();
-    res.json({ status: 'Cache purged' });
+  app.get('/api/fpl/*', async (req: Request, res: Response) => {
+    const result = await proxyFplPath(req.params[0], queryToSearch(req.query));
+    res.status(result.status).json(result.body);
   });
 
   if (options.serveStatic) {
     // `tsc --project tsconfig.server.json` emits dist/server.js and vite emits
-    // dist/public, so with __dirname === <root>/dist the client lives in ./public.
-    const publicDir = path.join(moduleDir, 'public');
+    // dist/public, so the client sits in ./public alongside the server bundle.
+    const publicDir = resolvePublicDir();
     app.use(express.static(publicDir));
 
     // SPA fallback. Never let it shadow API routes, otherwise a missing /api
@@ -193,12 +86,9 @@ export function createApp(options: CreateAppOptions = {}): Express {
         res.status(404).json({ error: 'Not found', path: req.path });
         return;
       }
-
       if (req.path.match(/\.\w+$/)) {
-        // Static asset request (has file extension)
         res.status(404).send('Not Found');
       } else {
-        // Serve index.html for SPA routing
         res.sendFile(path.join(publicDir, 'index.html'));
       }
     });
@@ -207,7 +97,7 @@ export function createApp(options: CreateAppOptions = {}): Express {
   return app;
 }
 
-/** Default export is consumed by the Vercel serverless function in /api. */
+/** Default export is used by any consumer that mounts the app directly. */
 const app = createApp();
 export default app;
 export { app };
@@ -215,10 +105,10 @@ export { app };
 /**
  * Start listening only when this module is the entry point.
  *
- * A `process.argv[1]` basename check is used instead of comparing against the
- * module path, because that comparison needs `import.meta.url` (unavailable in
- * CommonJS) and was the reason the module crashed on Vercel. The Vercel guard is
- * belt-and-braces: the serverless runtime never wants a listening socket.
+ * The check uses a `process.argv[1]` basename rather than comparing module paths,
+ * because that comparison needs `import.meta.url`, which is unavailable under
+ * CommonJS. The Vercel guard is belt-and-braces: a serverless runtime never
+ * wants a listening socket.
  */
 const isServerless = Boolean(process.env.VERCEL || process.env.VERCEL_ENV);
 const entry = process.argv[1] ?? '';
@@ -227,6 +117,6 @@ const invokedDirectly = /server\.(ts|js|mjs|cjs)$/.test(entry);
 if (invokedDirectly && !isServerless) {
   createApp({ serveStatic: true }).listen(PORT, () => {
     console.log(`FPL Pilot server running on http://localhost:${PORT}`);
-    console.log(`Proxy: /api/fpl/* → ${FPL_API_BASE}`);
+    console.log('Proxy: /api/fpl/* -> https://fantasy.premierleague.com/api/');
   });
 }
