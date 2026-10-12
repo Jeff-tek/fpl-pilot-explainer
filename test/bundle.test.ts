@@ -9,7 +9,25 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const projectRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 
-type FetchHandler = (request: Request) => Promise<Response> | Response;
+type FetchHandler = (request: { url: string; method?: string }, response?: unknown) => Promise<Response | void>;
+
+/** A minimal stand-in for Vercel's ServerResponse, used to assert Node-style invocation. */
+function fakeNodeResponse() {
+  const state = { status: 0, headers: {} as Record<string, string>, body: '' };
+  const res = {
+    status(code: number) {
+      state.status = code;
+      return res;
+    },
+    setHeader(name: string, value: string) {
+      state.headers[name.toLowerCase()] = value;
+    },
+    end(body?: string) {
+      state.body = body ?? '';
+    },
+  };
+  return { res, state };
+}
 
 /**
  * Guards the serverless entry point.
@@ -83,18 +101,43 @@ describe('serverless bundle', () => {
     const handler = await loadHandler('cjs');
     t.after(() => rmSync(dir, { recursive: true, force: true }));
 
-    const response = await handler(new Request('https://example.test/api/health'));
+    const response = (await handler({ url: 'https://example.test/api/health' })) as Response;
     assert.equal(response.status, 200);
 
     const body = (await response.json()) as { status: string };
     assert.equal(body.status, 'ok');
   });
 
-  it('returns a JSON 404 for an unknown API path', async () => {
+  it('answers /api/nope without making a network call', async () => {
     const handler = await loadHandler('cjs');
-    const response = await handler(new Request('https://example.test/api/nope'));
+    // This path returns a plain 404 and never reaches the upstream API, so it
+    // isolates handler-body failures from proxy failures.
+    const response = (await handler({ url: 'https://example.test/api/nope' })) as Response;
     assert.equal(response.status, 404);
     assert.match(response.headers.get('content-type') ?? '', /application\/json/);
+  });
+
+  it('works when invoked Node-style with (req, res)', async () => {
+    const handler = await loadHandler('cjs');
+    const { res, state } = fakeNodeResponse();
+
+    await handler({ url: 'https://example.test/api/health' }, res);
+
+    assert.equal(state.status, 200, 'Node-style invocation must set the status');
+    assert.match(state.headers['content-type'] ?? '', /application\/json/);
+
+    const body = JSON.parse(state.body) as { status: string };
+    assert.equal(body.status, 'ok');
+  });
+
+  it('works Node-style for a route that needs no network', async () => {
+    const handler = await loadHandler('cjs');
+    const { res, state } = fakeNodeResponse();
+
+    await handler({ url: 'https://example.test/api/nope' }, res);
+
+    assert.equal(state.status, 404);
+    assert.ok(state.body.length > 0, 'Node-style invocation must write a body');
   });
 
   it('proxies the FPL API in both trailing-slash forms', async () => {
@@ -102,7 +145,7 @@ describe('serverless bundle', () => {
 
     // The client requests the trailing-slash form; a rewrite may deliver either.
     for (const path of ['/api/fpl/fixtures/', '/api/fpl/fixtures']) {
-      const response = await handler(new Request(`https://example.test${path}`));
+      const response = (await handler({ url: `https://example.test${path}` })) as Response;
       assert.equal(response.status, 200, `${path} failed`);
 
       const body = (await response.json()) as unknown[];
@@ -112,12 +155,29 @@ describe('serverless bundle', () => {
 
   it('returns a real 404 for an unknown manager, never an empty squad', async () => {
     const handler = await loadHandler('cjs');
-    const response = await handler(
-      new Request('https://example.test/api/fpl/entry/999999999/')
-    );
+    const response = (await handler({
+      url: 'https://example.test/api/fpl/entry/999999999/',
+    })) as Response;
 
     assert.equal(response.status, 404);
     const body = (await response.json()) as { error?: string };
     assert.ok(typeof body.error === 'string' && body.error.length > 0);
+  });
+
+  it('handles POST purge-cache in both invocation styles', async () => {
+    const handler = await loadHandler('cjs');
+
+    const web = (await handler({
+      url: 'https://example.test/api/fpl/purge-cache',
+      method: 'POST',
+    })) as Response;
+    assert.equal(web.status, 200);
+
+    const { res, state } = fakeNodeResponse();
+    await handler(
+      { url: 'https://example.test/api/fpl/purge-cache', method: 'POST' },
+      res
+    );
+    assert.equal(state.status, 200);
   });
 });
