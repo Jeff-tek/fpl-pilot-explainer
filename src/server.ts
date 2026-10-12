@@ -1,13 +1,21 @@
 import express, { Request, Response, Express } from 'express';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import dns from 'dns';
 
 // Enforce IPv4 DNS resolution to prevent cloud container networking timeouts
 dns.setDefaultResultOrder('ipv4first');
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+/**
+ * Resolve the module directory without `import.meta.url`.
+ *
+ * `import.meta` does not exist in CommonJS, and the Vercel Node builder may
+ * compile this file to CommonJS even though package.json says `"type": "module"`.
+ * Using it here made the module throw during initialisation, which surfaced as
+ * FUNCTION_INVOCATION_FAILED (500) on every request. `typeof __dirname` is a
+ * safe probe: it is defined under CommonJS and simply absent under ESM.
+ */
+const moduleDir: string =
+  typeof __dirname !== 'undefined' ? __dirname : process.cwd();
 
 const PORT = process.env.PORT || 3001;
 
@@ -175,7 +183,7 @@ export function createApp(options: CreateAppOptions = {}): Express {
   if (options.serveStatic) {
     // `tsc --project tsconfig.server.json` emits dist/server.js and vite emits
     // dist/public, so with __dirname === <root>/dist the client lives in ./public.
-    const publicDir = path.join(__dirname, 'public');
+    const publicDir = path.join(moduleDir, 'public');
     app.use(express.static(publicDir));
 
     // SPA fallback. Never let it shadow API routes, otherwise a missing /api
@@ -205,13 +213,18 @@ export default app;
 export { app };
 
 /**
- * Only bind a port when this module is executed directly. When imported by the
- * serverless function there is no server to start.
+ * Start listening only when this module is the entry point.
+ *
+ * A `process.argv[1]` basename check is used instead of comparing against the
+ * module path, because that comparison needs `import.meta.url` (unavailable in
+ * CommonJS) and was the reason the module crashed on Vercel. The Vercel guard is
+ * belt-and-braces: the serverless runtime never wants a listening socket.
  */
-const invokedDirectly =
-  typeof process.argv[1] === 'string' && path.resolve(process.argv[1]) === __filename;
+const isServerless = Boolean(process.env.VERCEL || process.env.VERCEL_ENV);
+const entry = process.argv[1] ?? '';
+const invokedDirectly = /server\.(ts|js|mjs|cjs)$/.test(entry);
 
-if (invokedDirectly) {
+if (invokedDirectly && !isServerless) {
   createApp({ serveStatic: true }).listen(PORT, () => {
     console.log(`FPL Pilot server running on http://localhost:${PORT}`);
     console.log(`Proxy: /api/fpl/* → ${FPL_API_BASE}`);

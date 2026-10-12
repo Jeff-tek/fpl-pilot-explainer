@@ -107,9 +107,9 @@ export default function App() {
           <h1 className="text-3xl font-bold text-fpl-accent mb-3">FPL Pilot</h1>
           <p className="text-fpl-danger mb-4">{seasonError}</p>
           <p className="text-sm text-gray-400 mb-6">
-            FPL Pilot reads live data from fantasy.premierleague.com through its own
-            local proxy. Make sure the dev server is running with{' '}
-            <code className="text-fpl-accent">npm run dev</code>.
+            FPL Pilot reads live data from fantasy.premierleague.com through its own{' '}
+            <code className="text-fpl-accent">/api/fpl/*</code> proxy, which runs as part of
+            this deployment. This usually means the proxy function failed to start.
           </p>
           <button
             onClick={() => void loadSeason()}
