@@ -1,0 +1,92 @@
+/* Component-level styles only. Tailwind entry point (base/components/utilities)
+   lives in src/index.css and is imported by src/main.tsx. */
+
+/* Football pitch styling */
+.pitch {
+  background: linear-gradient(135deg, #1a472a 0%, #2d5f3f 100%);
+  border: 2px solid #ffffff;
+  position: relative;
+  aspect-ratio: 7 / 5;
+}
+
+.pitch::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 100%;
+  height: 1px;
+  background-color: #ffffff;
+}
+
+.pitch::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 1px;
+  height: 100%;
+  background-color: #ffffff;
+  transform: translateX(-50%);
+}
+
+/* Player card animations */
+.player-card {
+  @apply transition-transform duration-200 hover:scale-105 cursor-pointer;
+}
+
+.player-card:hover {
+  box-shadow: 0 0 20px rgba(255, 199, 44, 0.3);
+}
+
+/* Formation buttons */
+.formation-btn {
+  @apply px-3 py-1 text-sm font-semibold rounded transition-colors;
+  @apply bg-gray-700 text-white hover:bg-fpl-accent hover:text-fpl-primary;
+}
+
+.formation-btn.active {
+  @apply bg-fpl-accent text-fpl-primary;
+}
+
+/* Chip badge */
+.chip-badge {
+  @apply inline-block px-2 py-1 text-xs font-bold rounded-full;
+}
+
+.chip-wildcard { @apply bg-purple-600 text-white; }
+.chip-freehit { @apply bg-green-600 text-white; }
+.chip-benchboost { @apply bg-blue-600 text-white; }
+.chip-triplecaptain { @apply bg-red-600 text-white; }
+
+/* FDR difficulty color coding */
+.fdr-1 { @apply text-green-500; }
+.fdr-2 { @apply text-green-400; }
+.fdr-3 { @apply text-yellow-500; }
+.fdr-4 { @apply text-orange-500; }
+.fdr-5 { @apply text-red-500; }
+
+/* Modal animations */
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.modal-enter {
+  animation: slideIn 0.3s ease-out;
+}
+
+/* Gradient backgrounds */
+.gradient-accent {
+  background: linear-gradient(135deg, #ffc72c 0%, #ffb800 100%);
+}
+
+.gradient-primary {
+  background: linear-gradient(135deg, #37003c 0%, #6b0080 100%);
+}
