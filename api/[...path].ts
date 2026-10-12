@@ -1,6 +1,8 @@
-export default function handler(): Response {
-  return new Response(JSON.stringify({ probe: 'ok' }), {
-    status: 200,
-    headers: { 'content-type': 'application/json' },
-  });
+interface Res {
+  status(code: number): Res;
+  json(body: unknown): void;
+}
+
+export default function handler(_req: unknown, res: Res): void {
+  res.status(200).json({ probe: 'node-style-ok' });
 }
