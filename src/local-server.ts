@@ -25,12 +25,16 @@ function resolvePublicDir(): string {
     typeof __dirname !== 'undefined' ? __dirname : process.cwd();
 
   const candidates = [
+    // Alongside the server bundle (tsconfig.server.json emits server-dist/).
     path.join(moduleDir, 'public'),
-    path.join(process.cwd(), 'dist', 'public'),
+    // Sibling of the server bundle.
+    path.join(moduleDir, '..', 'dist'),
+    // Vite's output, relative to the working directory.
+    path.join(process.cwd(), 'dist'),
     path.join(process.cwd(), 'public'),
   ];
 
-  return candidates.find((dir) => existsSync(dir)) ?? candidates[0];
+  return candidates.find((dir) => existsSync(dir)) ?? candidates[2];
 }
 
 const PORT = process.env.PORT || 3001;
@@ -74,8 +78,8 @@ export function createApp(options: CreateAppOptions = {}): Express {
   });
 
   if (options.serveStatic) {
-    // `tsc --project tsconfig.server.json` emits dist/local-server.js and vite emits
-    // dist/public, so the client sits in ./public alongside the server bundle.
+    // `tsc --project tsconfig.server.json` emits server-dist/local-server.js and vite emits
+    // dist/, so the client sits next to the server bundle at ../dist.
     const publicDir = resolvePublicDir();
     app.use(express.static(publicDir));
 

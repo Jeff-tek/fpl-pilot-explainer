@@ -48,7 +48,7 @@ describe('serverless bundle', () => {
   const bundle = async (format: 'cjs' | 'esm') => {
     const outfile = path.join(dir, `entry.${format}.${format === 'esm' ? 'mjs' : 'cjs'}`);
     await build({
-      entryPoints: [path.join(projectRoot, 'api/index.ts')],
+      entryPoints: [path.join(projectRoot, 'api', '[...path].ts')],
       bundle: true,
       platform: 'node',
       target: 'node20',
@@ -82,7 +82,7 @@ describe('serverless bundle', () => {
     // regression cannot come back unnoticed.
     const outfile = path.join(dir, 'framework-check.cjs');
     return build({
-      entryPoints: [path.join(projectRoot, 'api/index.ts')],
+      entryPoints: [path.join(projectRoot, 'api', '[...path].ts')],
       bundle: true,
       platform: 'node',
       target: 'node20',
