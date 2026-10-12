@@ -4,12 +4,12 @@
     "composite": true,
     "outDir": "./server-dist",
     "tsBuildInfoFile": "./server-dist/tsconfig.server.tsbuildinfo",
-    "rootDir": "./src",
+    "rootDir": ".",
     "noEmit": false,
     "allowImportingTsExtensions": false,
     "module": "ES2020",
     "target": "ES2020"
   },
-  "include": ["src/local-server.ts", "src/proxy.ts"],
+  "include": ["src/local-server.ts", "api/[...path].ts"],
   "exclude": ["src/client"]
 }

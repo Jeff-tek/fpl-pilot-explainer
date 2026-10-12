@@ -19,7 +19,7 @@
     "test:unit": "node ./node_modules/tsx/dist/cli.mjs --test test/engine.test.ts test/bundle.test.ts",
     "test:live": "node ./node_modules/tsx/dist/cli.mjs test/proxy.live.ts",
     "check": "npm run test && npm run build",
-    "start": "node server-dist/local-server.js",
+    "start": "node server-dist/src/local-server.js",
     "preview": "node ./node_modules/vite/bin/vite.js preview"
   },
   "dependencies": {

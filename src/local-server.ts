@@ -3,11 +3,13 @@ import path from 'path';
 import { existsSync } from 'fs';
 import dns from 'dns';
 
-// The `.js` extension is required: Node's ESM resolver does not do extensionless
-// specifiers, so a bare `from './proxy'` compiles fine under tsx but throws
-// ERR_MODULE_NOT_FOUND for `node dist/local-server.js`. TypeScript maps it back to
-// proxy.ts under `moduleResolution: bundler`.
-import { proxyFplPath, purgeCache } from './proxy.js';
+// The proxy core lives in `api/[...path].ts` so the serverless bundle has no
+// cross-directory import to resolve — Vercel does not resolve one, and the
+// function fails to initialise with FUNCTION_INVOCATION_FAILED if it tries.
+// The `.js` extension is required because Node's ESM resolver does not do
+// extensionless specifiers; TypeScript maps it back to the .ts source under
+// `moduleResolution: bundler`.
+import { proxyFplPath, purgeCache } from '../api/[...path].js';
 
 // Enforce IPv4 DNS resolution to prevent cloud container networking timeouts
 dns.setDefaultResultOrder('ipv4first');
