@@ -9,7 +9,7 @@ import dns from 'dns';
 // The `.js` extension is required because Node's ESM resolver does not do
 // extensionless specifiers; TypeScript maps it back to the .ts source under
 // `moduleResolution: bundler`.
-import { proxyFplPath, purgeCache } from '../api/[...path].js';
+import { proxyFplPath, purgeCache } from '../api/index.js';
 
 // Enforce IPv4 DNS resolution to prevent cloud container networking timeouts
 dns.setDefaultResultOrder('ipv4first');

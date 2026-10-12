@@ -63,7 +63,7 @@ describe('serverless bundle', () => {
   const bundle = async (format: 'cjs' | 'esm') => {
     const outfile = path.join(dir, `entry.${format}.${format === 'esm' ? 'mjs' : 'cjs'}`);
     await build({
-      entryPoints: [path.join(projectRoot, 'api', '[...path].ts')],
+      entryPoints: [path.join(projectRoot, 'api', 'index.ts')],
       bundle: true,
       platform: 'node',
       target: 'node20',
@@ -108,7 +108,7 @@ describe('serverless bundle', () => {
 
   it('pulls no web framework into the deployed bundle', async () => {
     const result = await build({
-      entryPoints: [path.join(projectRoot, 'api', '[...path].ts')],
+      entryPoints: [path.join(projectRoot, 'api', 'index.ts')],
       bundle: true,
       platform: 'node',
       target: 'node20',

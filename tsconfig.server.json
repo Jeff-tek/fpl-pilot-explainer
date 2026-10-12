@@ -10,6 +10,6 @@
     "module": "ES2020",
     "target": "ES2020"
   },
-  "include": ["src/local-server.ts", "api/[...path].ts"],
+  "include": ["src/local-server.ts", "api/index.ts"],
   "exclude": ["src/client"]
 }
