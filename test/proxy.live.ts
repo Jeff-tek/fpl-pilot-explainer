@@ -4,7 +4,7 @@ import { once } from 'node:events';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { createApp } from '../src/server';
+import { createApp } from '../src/local-server';
 
 /**
  * End-to-end smoke test against the REAL FPL API.

@@ -5,7 +5,7 @@
  * can be used from three places without dragging a framework in:
  *
  *  - `api/index.ts`  — the Vercel serverless function (Web `fetch` handler)
- *  - `src/server.ts` — the local/self-hosted Express server
+ *  - `src/local-server.ts` — the local/self-hosted Express server
  *  - `test/proxy.live.ts` — the live end-to-end checks
  *
  * Why this split exists: mounting a full Express app inside a Vercel function

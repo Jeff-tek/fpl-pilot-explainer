@@ -23,5 +23,5 @@
     "noFallthroughCasesInSwitch": true
   },
   "include": ["src", "api"],
-  "exclude": ["src/server.ts"]
+  "exclude": ["src/local-server.ts"]
 }

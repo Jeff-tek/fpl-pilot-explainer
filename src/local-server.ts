@@ -5,7 +5,7 @@ import dns from 'dns';
 
 // The `.js` extension is required: Node's ESM resolver does not do extensionless
 // specifiers, so a bare `from './proxy'` compiles fine under tsx but throws
-// ERR_MODULE_NOT_FOUND for `node dist/server.js`. TypeScript maps it back to
+// ERR_MODULE_NOT_FOUND for `node dist/local-server.js`. TypeScript maps it back to
 // proxy.ts under `moduleResolution: bundler`.
 import { proxyFplPath, purgeCache } from './proxy.js';
 
@@ -18,7 +18,7 @@ dns.setDefaultResultOrder('ipv4first');
  * `import.meta` does not exist in CommonJS, and a bundler may compile this file
  * to CommonJS even though package.json says `"type": "module"`, so it cannot be
  * relied on. Instead, probe the known locations: alongside this file (the normal
- * `dist/server.js` case) and relative to the working directory.
+ * `dist/local-server.js` case) and relative to the working directory.
  */
 function resolvePublicDir(): string {
   const moduleDir: string =
@@ -74,7 +74,7 @@ export function createApp(options: CreateAppOptions = {}): Express {
   });
 
   if (options.serveStatic) {
-    // `tsc --project tsconfig.server.json` emits dist/server.js and vite emits
+    // `tsc --project tsconfig.server.json` emits dist/local-server.js and vite emits
     // dist/public, so the client sits in ./public alongside the server bundle.
     const publicDir = resolvePublicDir();
     app.use(express.static(publicDir));
@@ -112,7 +112,7 @@ export { app };
  */
 const isServerless = Boolean(process.env.VERCEL || process.env.VERCEL_ENV);
 const entry = process.argv[1] ?? '';
-const invokedDirectly = /server\.(ts|js|mjs|cjs)$/.test(entry);
+const invokedDirectly = /local-server\.(ts|js|mjs|cjs)$/.test(entry);
 
 if (invokedDirectly && !isServerless) {
   createApp({ serveStatic: true }).listen(PORT, () => {
